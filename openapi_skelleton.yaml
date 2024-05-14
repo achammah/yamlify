@@ -1,0 +1,22 @@
+openapi: 3.0.3
+info:
+  title: 
+  version: 1.0.0
+  description:
+servers:
+paths: {}
+components:
+  schemas: {}
+  responses: {}
+  parameters: {}
+  examples: {}
+  requestBodies: {}
+  headers: {}
+  securitySchemes: {}
+  links: {}
+  callbacks: {}
+tags: {}
+externalDocs:
+  description: 
+  url:
+security: []

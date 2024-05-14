@@ -1,0 +1,17 @@
+fastapi>=0.65.0
+uvicorn>=0.13.0
+pydantic>=1.8.0
+docker>=4.4.0
+httpx>=0.16.0
+pandas>=1.2.0
+uvicorn>=0.13.0
+langchain
+langchain-anthropic
+langchain-openai
+requests
+python-dotenv
+apify-client
+openai
+openapi-schema-validator
+jsonschema
+deepdiff
