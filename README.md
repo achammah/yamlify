@@ -71,7 +71,7 @@ The `parse_openapi_schema` function in the `OpenAPIBuilder.py` script parses and
 
 1. **Run the Web Scraping Script**:
     ```bash
-    python3 fetchURLContent.py <start_url>
+    python fetchURLContent.py <start_url>
     ```
     Replace `<start_url>` with the URL of the website you want to scrape.
 
@@ -80,7 +80,7 @@ The `parse_openapi_schema` function in the `OpenAPIBuilder.py` script parses and
 
 3. **Merge and Fix Schema**:
     ```bash
-    python3 OpenAPIBuilder.py
+    python OpenAPIBuilder.py
     ```
 
     This will merge the schema parts, fix common errors, and validate the final schema.
