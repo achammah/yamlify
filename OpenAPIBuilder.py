@@ -1,25 +1,35 @@
-import getpass
 import os
-import re
 import json
+from typing import List, Dict, Union, Tuple
+
 import yaml
+from dotenv import load_dotenv
 from openai import OpenAI
-from messageTemplate import systemMessage, humanMessage1, humanMessage2, aiMessage1, aiMessage2, test, systemMessageMapper, humanMessageMapper1, aiMessageMapper1, systemMessagePart
-from fetchURLContent import run_actor_and_fetch_data
+
+from messageTemplate import (
+    humanMessage1,
+    aiMessage1,
+    test,
+    systemMessageMapper,
+    systemMessagePart
+)
 import concurrent.futures
 from openapi_schema_validator import validate, OAS30Validator
 from jsonschema import ValidationError
 from deepdiff import DeepDiff
+from logger import Logger
 
+yamlify_logger = Logger(name="yamlify", level=Logger.INFO)
 
-client = OpenAI()
-
-
+load_dotenv()
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+assert OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def process_parts_concurrently(document_parts, openapi_schema, parsed_schema):
+def process_parts_concurrently(document_parts: List[str], openapi_schema: Dict,
+                               parsed_schema: Union[List, Dict]):
     parts_dict = {
         "info": "",
         "paths": {},
@@ -32,26 +42,29 @@ def process_parts_concurrently(document_parts, openapi_schema, parsed_schema):
         'tags': 'footer'
     }
 
-    def process_individual_part(part_name, part_data):
+    def process_individual_part(part_name: str, part_data: Union[str, Dict]) -> Union[Tuple[None, None], Tuple[str, Dict]]:
         try:
             mapped_part_name = part_name_mapping.get(part_name, part_name)
-            print(f'Processing part: {mapped_part_name}')
+            yamlify_logger.info(f'Processing part: {mapped_part_name}')
             # part_data here is expected to be a dictionary with details necessary for processing the part
             return part_name, generate_openapi_part(document_parts, openapi_schema, mapped_part_name, part_data)
         except Exception as exc:
-            print(f'Error processing part: {exc}')
+            yamlify_logger.exception(f'Error processing part: {exc}')
             return None, None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         futures = []
         # Handle header
-        futures.append(executor.submit(process_individual_part, 'info', {"title": parsed_schema["title"], "servers": parsed_schema["servers"]}))
+        futures.append(executor.submit(process_individual_part, 'info',
+                                       {"title": parsed_schema["title"], "servers": parsed_schema["servers"]}))
         # Handle paths
         for path_key in parsed_schema["paths"]:
-            futures.append(executor.submit(process_individual_part, 'paths', {path_key: parsed_schema["paths"][path_key]}))
+            futures.append(
+                executor.submit(process_individual_part, 'paths', {path_key: parsed_schema["paths"][path_key]}))
         # Handle components
         for component_key in parsed_schema["components"]:
-            futures.append(executor.submit(process_individual_part, 'components', {component_key: parsed_schema["components"][component_key]}))
+            futures.append(executor.submit(process_individual_part, 'components',
+                                           {component_key: parsed_schema["components"][component_key]}))
         # Handle security
         for security_item in parsed_schema["security"]:
             futures.append(executor.submit(process_individual_part, 'security', security_item))
@@ -67,12 +80,12 @@ def process_parts_concurrently(document_parts, openapi_schema, parsed_schema):
                         parts_dict[part_name].update(result)
                     else:
                         parts_dict[part_name] = result
-                    print(f'Part processed successfully: {part_name}')
+                    yamlify_logger.info(f'Part processed successfully: {part_name}')
             except Exception as exc:
-                print(f'Error with part: {exc}')
+                yamlify_logger.info(f'Error with part: {exc}')
 
     # Merge the parts into the skeleton
-    main_schema= merge_yaml('openapi_skelleton.yaml', parts_dict)
+    main_schema = merge_yaml('openapi_skelleton.yaml', parts_dict)
 
     # Load the merged YAML file
     # with open('merged_openapi_schema.yaml', 'r') as file:
@@ -85,13 +98,10 @@ def process_parts_concurrently(document_parts, openapi_schema, parsed_schema):
     with open('final_openapi_schema.yaml', 'w') as file:
         yaml.safe_dump(cleaned_yaml, file, sort_keys=False)
 
-    print("All parts have been merged and cleaned into the final OpenAPI schema.")
-
-#scrapped_content = run_actor_and_fetch_data(APIFY_API_KEY, url)
+    yamlify_logger.info("All parts have been merged and cleaned into the final OpenAPI schema.")
 
 
-
-def generate_openapi_map(url):
+def generate_openapi_map() -> Dict:
     scrapped_content = test  # Example placeholder for scrapped content
     filename = "openapi_schema.json"
     max_length = 9000  # Define max length for each part of the documentation
@@ -100,14 +110,14 @@ def generate_openapi_map(url):
     parts = chunk_string(scrapped_content, max_length)
     total_parts = len(parts)
     openapi_schema = {}  # Start with an empty schema
-    saved_paths = {}  # Initialize saved_paths
-    saved_components = {"schemas": [], "securitySchemes": []}  # Initialize saved_components
+    # saved_paths = {}  # Initialize saved_paths
+    # saved_components = {"schemas": [], "securitySchemes": []}  # Initialize saved_components
 
     for i, part in enumerate(parts):
         part_number = i + 1
         part_tagged = f"==START OF PART {part_number}/{total_parts}==\n{part}\n==END OF PART {part_number}/{total_parts}==\n"
-        print("\nProcessing part ", part_number, " of ", total_parts)
-        print("\n===\nDocument sent to GPT-4o for processing\n===\n", part_tagged)
+        yamlify_logger.info("\nProcessing part ", part_number, " of ", total_parts)
+        yamlify_logger.info("\n===\nDocument sent to GPT-4o for processing\n===\n", part_tagged)
 
         # Extract paths and components related to the previous parts (1 to part_number-2)
         new_saved_paths = {}
@@ -137,9 +147,9 @@ def generate_openapi_map(url):
                     if comp in openapi_schema_temp['components'].get(comp_key, []):
                         openapi_schema_temp['components'][comp_key].remove(comp)
 
-        print("\n===\nSaved paths\n===\n", new_saved_paths)
-        print("\n===\nSaved components\n===\n", new_saved_components)
-        print("\n===\nOpenAPI TEMP Schema\n===\n", openapi_schema_temp)
+        yamlify_logger.info("\n===\nSaved paths\n===\n", new_saved_paths)
+        yamlify_logger.info("\n===\nSaved components\n===\n", new_saved_components)
+        yamlify_logger.info("\n===\nOpenAPI TEMP Schema\n===\n", openapi_schema_temp)
 
         openapi_message = f"\n<Documentation>{part_tagged}\n</Documentation>\n<Schema>{json.dumps(openapi_schema_temp)}\n</Schema>"
 
@@ -157,10 +167,10 @@ def generate_openapi_map(url):
                         {"role": "user", "content": openapi_message},
                     ]
                 )
-                
+
                 output = response.choices[0].message.content
                 schema_parts = yaml.safe_load(output)
-                print("\n===\nSchema parts generated by GPT-4o\n===\n", schema_parts)
+                yamlify_logger.info("\n===\nSchema parts generated by GPT-4o\n===\n", schema_parts)
 
                 # Convert paths from list to dictionary if needed
                 if isinstance(schema_parts, dict) and 'paths' in schema_parts:
@@ -216,35 +226,38 @@ def generate_openapi_map(url):
                 # Cleanup duplicates in the final schema
                 openapi_schema = cleanup_duplicates(openapi_schema)
 
-                print("\n===\nOpenAPI Schema updated\n===\n", openapi_schema)
+                yamlify_logger.info("\n===\nOpenAPI Schema updated\n===\n", openapi_schema)
 
                 with open(filename, 'w') as file:
                     json.dump(openapi_schema, file, indent=4)
-                print("\nUpdated OpenAPI Schema written to JSON file.\n")
+                yamlify_logger.info("\nUpdated OpenAPI Schema written to JSON file.\n")
 
-                # Update saved_paths and saved_components for the next iteration
-                saved_paths = new_saved_paths
-                saved_components = new_saved_components
-                
+                # # Update saved_paths and saved_components for the next iteration
+                # saved_paths = new_saved_paths
+                # saved_components = new_saved_components
+
                 break  # Break the loop if processing is successful
-                
+
             except yaml.YAMLError as e:
                 retry_count += 1
-                print(f"YAML parsing error on part {part_number}/{total_parts}: {e}")
+                yamlify_logger.info(f"YAML parsing error on part {part_number}/{total_parts}: {e}")
                 if retry_count < max_retries:
-                    print(f"Retrying... ({retry_count}/{max_retries})")
+                    yamlify_logger.info(f"Retrying... ({retry_count}/{max_retries})")
                 else:
-                    print(f"Failed to process part {part_number}/{total_parts} after {max_retries} retries. Moving to next part...")
+                    yamlify_logger.info(
+                        f"Failed to process part {part_number}/{total_parts} after {max_retries} retries. Moving to next part...")
             except Exception as e:
-                print(f"Unexpected error: {e}")
+                yamlify_logger.info(f"Unexpected error: {e}")
                 retry_count += 1
                 if retry_count >= max_retries:
-                    print(f"Failed to process part {part_number}/{total_parts} after {max_retries} retries. Moving to next part...")
+                    yamlify_logger.info(
+                        f"Failed to process part {part_number}/{total_parts} after {max_retries} retries. Moving to next part...")
 
     return openapi_schema
 
-def cleanup_duplicates(schema):
-    # Function to remove duplicates in lists of dictionaries based on deep equality
+
+def cleanup_duplicates(schema: Dict) -> Dict:
+    """ Function to remove duplicates in lists of dictionaries based on deep equality """
     def remove_duplicates(lst):
         seen = []
         for item in lst:
@@ -264,35 +277,38 @@ def cleanup_duplicates(schema):
     return schema
 
 
-def chunk_string(content, max_length):
-    if len(content) > max_length:
-        print("\nLength of content is greater than", max_length, "characters\n")
-        parts = []
-        start = 0
-        total_length = len(content)
+def chunk_string(content: str, max_length: int) -> List[str]:
+    """Splits text into chunks of `max_length` characters. If content length is less than `max_length` returns single chunk in the list"""
+    total_length_content = len(content)
 
-        while start < total_length:
-            # Search for a natural break point but do not exceed the bounds of the string
-            if start + max_length >= total_length:
-                next_break = total_length  # If the remaining content is less than max_length, take all of it
-            else:
-                next_break = content.rfind("\n\n", start, start + max_length)
-                if next_break == -1:  # No double newline found, search for the last space within the limit
-                    next_break = content.rfind(" ", start, start + max_length)
-                    if next_break == -1:  # No space found either, force a break at max_length
-                        next_break = start + max_length
+    if total_length_content <= max_length:
+        yamlify_logger.debug(
+            f"Length of content ({total_length_content=}) is less or equal than {max_length=} characters")
+        return [content]
 
-            parts.append(content[start:next_break].strip())
-            start = next_break + 1  # Move start just past the last character of the current part
+    yamlify_logger.debug(f"Length of content ({total_length_content=}) is greater than {max_length=} characters")
+    chunks = []
+    start = 0
+    while start < total_length_content:
+        # Search for a natural break point but do not exceed the bounds of the string
+        if start + max_length >= total_length_content:
+            next_break = total_length_content  # If the remaining content is less than max_length, take all of it
+        else:
+            next_break = content.rfind("\n\n", start, start + max_length)
+            if next_break == -1:  # No double newline found, search for the last space within the limit
+                next_break = content.rfind(" ", start, start + max_length)
+                if next_break == -1:  # No space found either, force a break at max_length
+                    next_break = start + max_length
+        chunk = content[start:next_break].strip()
+        chunks.append(chunk)
+        start = next_break + 1  # Move start just past the last character of the current part
 
-    else:
-        print("\nLength of content is less than or equal to", max_length, "characters\n")
-        parts = [content]
-    return parts
+    yamlify_logger.debug(f"Content split into {len(chunks)} chunks")
+    return chunks
 
 
-
-def generate_openapi_part(document_parts, openapi_schema, part_name, parsed_string):
+def generate_openapi_part(document_parts: List, openapi_schema: Dict, part_name: str,
+                          parsed_string: Union[str, Dict]) -> Dict:
     # Define part-specific conversation starters
     conversation_starters = {
         'header': "Need to write the full header of the openapi based on the Plan ({parsed_string}), please provide ALL information relevant for this API (description, etc.) that will go in the header",
@@ -301,7 +317,7 @@ def generate_openapi_part(document_parts, openapi_schema, part_name, parsed_stri
         'security': "\n FOCUS ONLY on this security please \n {parsed_string}",
         'footer': "Need to write relevant tag part based on the Plan if relevant (DO NOT invent any tag not present in the Plan)"
     }
-    
+
     # Check the part name is valid
     if part_name not in conversation_starters:
         raise ValueError(f'Invalid part name: {part_name}. Must be one of {list(conversation_starters.keys())}.')
@@ -337,7 +353,8 @@ def generate_openapi_part(document_parts, openapi_schema, part_name, parsed_stri
 
     # Use the defined conversation starter for the specified part
     if part_name != 'footer':
-        conversation_starter = conversation_starters[part_name].format(parsed_string=json.dumps(parsed_string_dict, indent=2))
+        conversation_starter = conversation_starters[part_name].format(
+            parsed_string=json.dumps(parsed_string_dict, indent=2))
     else:
         conversation_starter = conversation_starters[part_name]
 
@@ -358,7 +375,8 @@ def generate_openapi_part(document_parts, openapi_schema, part_name, parsed_stri
 
     return yaml_openapi_part
 
-def parse_openapi_schema(data):
+
+def parse_openapi_schema(data: Dict) -> Dict:
     # Initialize separate dictionaries
     paths_dict = {}
     components_dict = {
@@ -416,12 +434,11 @@ def parse_openapi_schema(data):
     return processed_data
 
 
-
-def merge_yaml(skeleton_file, parts_dict, output_name='openapi_schema.yaml'):
-    with open(skeleton_file, 'r') as file:
+def merge_yaml(skeleton_filename: str, parts_dict: Dict, output_name: str = 'openapi_schema.yaml') -> Dict:
+    with open(skeleton_filename, 'r') as file:
         main_schema = yaml.safe_load(file) or {}
 
-    def recursive_merge(dict1, dict2, path=""):
+    def recursive_merge(dict1: dict, dict2: dict, path: str = ""):
         """
         Recursively merge two dictionaries.
         """
@@ -443,11 +460,11 @@ def merge_yaml(skeleton_file, parts_dict, output_name='openapi_schema.yaml'):
             else:
                 if key in dict1 and isinstance(dict1[key], (dict, list)):
                     # Skip merging due to type conflict
-                    print(f"Skipping merge at key '{current_path}' due to type conflict.")
+                    yamlify_logger.info(f"Skipping merge at key '{current_path}' due to type conflict.")
                 else:
                     dict1[key] = value
 
-    def cleanup_yaml(yaml_dict):
+    def cleanup_yaml(yaml_dict: Union[List, Dict]) -> Union[List, Dict]:
         """
         Recursively remove unwanted keys from the YAML dictionary.
         """
@@ -512,21 +529,19 @@ def merge_yaml(skeleton_file, parts_dict, output_name='openapi_schema.yaml'):
     # Validate the fixed schema
     try:
         validate(fixed_schema, fixed_schema, cls=OAS30Validator)
-        print("OpenAPI schema is valid.")
+        yamlify_logger.info("OpenAPI schema is valid.")
     except ValidationError as e:
-        print(f"OpenAPI schema validation error: {e.message}")
-        print("Could not automatically fix all schema errors.")
+        yamlify_logger.info(f"OpenAPI schema validation error: {e.message}")
+        yamlify_logger.info("Could not automatically fix all schema errors.")
 
     with open(output_name, 'w') as file:
         yaml.safe_dump(fixed_schema, file, sort_keys=False)
 
-    print(f"Merged and cleaned YAML written to {output_name}")
+    yamlify_logger.info(f"Merged and cleaned YAML written to {output_name}")
     return fixed_schema
 
 
-
-
-def yaml_cleanup(yaml_dict):
+def yaml_cleanup(yaml_dict: Union[List, Dict]) -> Union[List, Dict]:
     """
     Recursively remove empty parts from the YAML dictionary.
     """
@@ -534,34 +549,35 @@ def yaml_cleanup(yaml_dict):
         cleaned_dict = {}
         for key, value in yaml_dict.items():
             cleaned_value = yaml_cleanup(value)
-            if cleaned_value or cleaned_value == False or cleaned_value == 0:
+            if cleaned_value or cleaned_value is False or cleaned_value == 0:
                 cleaned_dict[key] = cleaned_value
         return cleaned_dict
     elif isinstance(yaml_dict, list):
-        return [yaml_cleanup(item) for item in yaml_dict if yaml_cleanup(item) or yaml_cleanup(item) == False or yaml_cleanup(item) == 0]
-    else:
-        return yaml_dict
-    
+        return [yaml_cleanup(item) for item in yaml_dict if
+                yaml_cleanup(item) or yaml_cleanup(item) is False or yaml_cleanup(item) == 0]
 
-def fix_schema_errors(schema):
+    return yaml_dict
+
+
+def fix_schema_errors(schema: Dict) -> Dict:
     """
     Attempt to fix common OpenAPI schema errors.
     """
 
-    def fix_parameter(parameter):
+    def fix_parameter(parameter: Dict):
         """
         Fix issues with individual parameters.
         """
         if parameter.get('in') == 'query' and 'default' in parameter:
-            print(f"Removing 'default' from query parameter '{parameter['name']}'")
+            yamlify_logger.info(f"Removing 'default' from query parameter '{parameter['name']}'")
             del parameter['default']
-        
+
         # Ensure parameters have either a 'schema' or 'content' property
         if 'schema' not in parameter and 'content' not in parameter:
-            print(f"Adding 'schema' to parameter '{parameter['name']}'")
+            yamlify_logger.info(f"Adding 'schema' to parameter '{parameter['name']}'")
             parameter['schema'] = {}
 
-    def fix_schema(schema):
+    def fix_schema(schema: Dict):
         """
         Recursively fix issues in schema objects.
         """
@@ -580,32 +596,32 @@ def fix_schema_errors(schema):
                     fix_schema(item)
 
         if 'required' in schema and not isinstance(schema['required'], list):
-            print(f"Converting 'required' to list in schema {schema}")
+            yamlify_logger.info(f"Converting 'required' to list in schema {schema}")
             schema['required'] = [schema['required']]
 
         if 'enum' in schema and not isinstance(schema['enum'], list):
-            print(f"Converting 'enum' to list in schema {schema}")
+            yamlify_logger.info(f"Converting 'enum' to list in schema {schema}")
             schema['enum'] = [schema['enum']]
 
         if 'allOf' in schema and not isinstance(schema['allOf'], list):
-            print(f"Converting 'allOf' to list in schema {schema}")
+            yamlify_logger.info(f"Converting 'allOf' to list in schema {schema}")
             schema['allOf'] = [schema['allOf']]
 
         if 'oneOf' in schema and not isinstance(schema['oneOf'], list):
-            print(f"Converting 'oneOf' to list in schema {schema}")
+            yamlify_logger.info(f"Converting 'oneOf' to list in schema {schema}")
             schema['oneOf'] = [schema['oneOf']]
 
         if 'anyOf' in schema and not isinstance(schema['anyOf'], list):
-            print(f"Converting 'anyOf' to list in schema {schema}")
+            yamlify_logger.info(f"Converting 'anyOf' to list in schema {schema}")
             schema['anyOf'] = [schema['anyOf']]
 
         if '$ref' in schema:
             ref = schema['$ref']
             if not ref.startswith('#/components/schemas/'):
-                print(f"Removing invalid $ref: {ref}")
+                yamlify_logger.info(f"Removing invalid $ref: {ref}")
                 del schema['$ref']
 
-    def fix_responses(responses):
+    def fix_responses(responses: Dict):
         """
         Fix issues in responses.
         """
@@ -615,7 +631,7 @@ def fix_schema_errors(schema):
                     if 'schema' in content_value:
                         fix_schema(content_value['schema'])
 
-    def fix_paths(paths):
+    def fix_paths(paths: Dict):
         """
         Fix issues in paths.
         """
@@ -642,7 +658,7 @@ def fix_schema_errors(schema):
         components = schema['components']
         if 'schemas' in components:
             if isinstance(components['schemas'], list):
-                print("Converting 'schemas' from list to dictionary.")
+                yamlify_logger.info("Converting 'schemas' from list to dictionary.")
                 # Convert list to dictionary
                 schemas_dict = {}
                 for schema_item in components['schemas']:
@@ -670,12 +686,9 @@ def fix_schema_errors(schema):
     return schema
 
 
+## try the generate_openapi_documentation function with a sample URL : https://finnhub.io/docs/api/
 
-     
-## try the generate_openapi_documentation function with a sample URL : https://finnhub.io/docs/api/ 
-
-## print(generate_openapi_map("https://finnhub.io/docs/api/"))
-
+## yamlify_logger.info(generate_openapi_map("https://finnhub.io/docs/api/"))
 
 
 # Example usage
@@ -683,7 +696,6 @@ def fix_schema_errors(schema):
 
 # generate_openapi_map("https://finnhub.io/docs/api/")
 document_parts = chunk_string(test, 9000)
-
 
 file_path = "openapi_schema.json"
 with open(file_path, 'r') as file:
@@ -697,7 +709,7 @@ process_parts_concurrently(document_parts, openapi_schema, parsed_schema)
 # part_name = 'header'
 # parsed_schema_string = {"title": parsed_schema["title"], "servers": parsed_schema["servers"]}
 # header_yaml_part = generate_openapi_part(document_parts, openapi_schema, part_name, parsed_schema_string)
-# print(f"Generated Header YAML:\n{header_yaml_part}\n\n")
+# yamlify_logger.info(f"Generated Header YAML:\n{header_yaml_part}\n\n")
 
 # # Test one Path
 # part_name = 'paths'
@@ -706,13 +718,13 @@ process_parts_concurrently(document_parts, openapi_schema, parsed_schema)
 # parsed_schema_string = {path_key: parsed_schema["paths"][path_key]}
 
 # paths_yaml_part = generate_openapi_part(document_parts, openapi_schema, part_name, parsed_schema_string)
-# print(f"Generated Path YAML for {path_key}:\n{paths_yaml_part}\n\n")
+# yamlify_logger.info(f"Generated Path YAML for {path_key}:\n{paths_yaml_part}\n\n")
 
 # # Test the Footer
 # part_name = 'footer'
 # parsed_schema_string = ""  
 # footer_yaml_part = generate_openapi_part(document_parts, openapi_schema, part_name, parsed_schema_string)
-# print(f"Generated Footer YAML:\n{footer_yaml_part}\n\n")
+# yamlify_logger.info(f"Generated Footer YAML:\n{footer_yaml_part}\n\n")
 
 # parts_dict = {
 #     "info": header_yaml_part,
@@ -721,14 +733,11 @@ process_parts_concurrently(document_parts, openapi_schema, parsed_schema)
 #     "security": "", 
 #     "tags": footer_yaml_part
 # }
-# print("Parts dictionary:")
-# print(parts_dict)
+# yamlify_logger.info("Parts dictionary:")
+# yamlify_logger.info(parts_dict)
 # # Merge yaml parts
 # merge_yaml('openapi_skelleton.yaml', parts_dict, 'final_openapi_schema.yaml')
 # merge_yaml('openapi_skelleton.yaml', [header_yaml_part, paths_yaml_part, footer_yaml_part], 'final_openapi_schema.yaml')
 
-#process_parts_concurrently(document_parts, openapi_schema, parsed_schema)
-#print(json.dumps(parsed_schema, indent=4))
-
-
-
+# process_parts_concurrently(document_parts, openapi_schema, parsed_schema)
+# yamlify_logger.info(json.dumps(parsed_schema, indent=4))
