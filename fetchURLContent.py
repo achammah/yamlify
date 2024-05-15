@@ -1,4 +1,3 @@
-import os
 import json
 from dotenv import load_dotenv
 from apify_client import ApifyClient
@@ -6,7 +5,8 @@ from apify_client import ApifyClient
 # Load environment variables from .env file
 load_dotenv()
 
-def run_actor_and_fetch_data(api_key, start_url):
+
+def run_actor_and_fetch_data(api_key: str, start_url: str) -> str:
     # Initialize the Apify client with your API token
     client = ApifyClient(api_key)
 
