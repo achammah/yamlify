@@ -92,3 +92,19 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ## Contributing
 
 Feel free to submit issues or pull requests if you have suggestions or improvements.
+
+----
+
+## Pre-commit
+Please use python linting before pushing.
+Run
+```bash
+pre-commit install
+```
+
+After that you are free to `git commit` and pre-commit hooks will fix common errors for you.
+
+if `pre-commit` is missing in your system run following to install:
+```bash
+pip install pre-commit
+```
