@@ -1,6 +1,6 @@
 exclude: |
   (?x)^(
-      openapi_skelleton.yaml
+      openapi_skeleton.yaml
   )$
 
 repos:
@@ -28,8 +28,8 @@ repos:
     rev: 5.11.5
     hooks:
       - id: isort
-  - repo: https://github.com/pre-commit/mirrors-pylint
-    rev: v3.0.0a3
+  - repo: https://github.com/pylint-dev/pylint
+    rev: v3.2.0
     hooks:
       - id: pylint
   - repo: https://github.com/psf/black
